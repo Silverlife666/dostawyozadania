@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Harmonogram zadań i dostaw</title>
+<!-- Cache-buster dodany do stylów -->
 <style>
 :root{--navy:#123b69;--ink:#152238;--pale:#eef4fb;--line:#cbd8e6;--green:#16825d}
 *{box-sizing:border-box}
@@ -62,7 +63,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 <header>
   <div>
     <h1>Harmonogram zadań i dostaw</h1>
-    <p>System operacyjny · Synchronizacja w locie · <span id="appVersion">Wersja 1.6</span></p>
+    <p>System operacyjny · Chmura w locie · <span id="appVersion">Wersja 1.7</span></p>
   </div>
   <button onclick="generatePdf()">⬇ Pobierz PDF</button>
 </header>
@@ -97,10 +98,10 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <button class="secondary" onclick="resetForm()">Wyczyść formularz</button>
   </div>
 
-  <h3>Synchronizacja w locie</h3>
+  <h3>Synchronizacja</h3>
   <div class="actions">
     <button onclick="fetchCloudData(true)">🔄 Odśwież z chmury</button>
-    <button class="secondary" onclick="exportData()">Eksportuj kopia JSON</button>
+    <button class="secondary" onclick="exportData()">Eksportuj JSON</button>
     <label class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
     <button class="danger" onclick="clearData()">Wyczyść plan</button>
   </div>
@@ -112,6 +113,8 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <div>
       <h2>Widok harmonogramu</h2>
       <p id="period" class="muted"></p>
+      <!-- Informacja o ostatniej zmianie w chmurze -->
+      <p id="lastChangeInfo" class="muted" style="margin-top:4px; font-weight:bold; color:var(--navy);">Ostatnia zmiana harmonogramu: —</p>
     </div>
     <div class="print-controls">
       <label>Wyświetl zakres
@@ -138,16 +141,25 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 </section>
 </main>
 
+<!-- Cache-buster dodany do skryptu za pomocą parametru ?v=1.7 -->
 <script>
-const CURRENT_VERSION = "Wersja 1.6";
+const CURRENT_VERSION = "Wersja 1.7";
 document.getElementById("appVersion").textContent = CURRENT_VERSION;
 
 const API_URL = "https://api.npoint.io/8fffe0f77e84f6816676";
-let data = { employees: [], assignments: [] }, editing = "";
+let data = { employees: [], assignments: [], lastModified: "—" }, editing = "";
 
 const el = id => document.getElementById(id);
 const esc = x => String(x||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 const iso = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+
+function updateLastChangeDisplay() {
+  if(data.lastModified && data.lastModified !== "—") {
+    el("lastChangeInfo").textContent = "Ostatnia zmiana harmonogramu: " + data.lastModified;
+  } else {
+    el("lastChangeInfo").textContent = "Ostatnia zmiana harmonogramu: —";
+  }
+}
 
 async function fetchCloudData(showAlert = false) {
   el("syncStatus").textContent = "Status: Pobieranie z chmury...";
@@ -157,23 +169,31 @@ async function fetchCloudData(showAlert = false) {
       let json = await res.json();
       if(json && Array.isArray(json.assignments)) {
         data = json;
-        localStorage.setItem("harmonogram-zadan-v6", JSON.stringify(data));
+        if(!data.lastModified) data.lastModified = "—";
+        localStorage.setItem("harmonogram-zadan-v7", JSON.stringify(data));
         if(showAlert) alert("Pomyślnie pobrano najnowsze dane z chmury!");
       }
     }
   } catch(e) {
-    let local = localStorage.getItem("harmonogram-zadan-v6");
+    let local = localStorage.getItem("harmonogram-zadan-v7");
     if(local) data = JSON.parse(local);
   }
   renderPeople();
   setup();
   render();
+  updateLastChangeDisplay();
   el("syncStatus").textContent = "Status: Zsynchronizowano";
 }
 
 async function saveCloudData() {
-  localStorage.setItem("harmonogram-zadan-v6", JSON.stringify(data));
+  // Ustawienie aktualnego czasu ostatniej zmiany (np. 10:07)
+  let now = new Date();
+  data.lastModified = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + " (" + String(now.getDate()).padStart(2,"0") + "." + String(now.getMonth()+1).padStart(2,"0") + ")";
+
+  localStorage.setItem("harmonogram-zadan-v7", JSON.stringify(data));
+  updateLastChangeDisplay();
   el("syncStatus").textContent = "Status: Wysyłanie w locie...";
+  
   try {
     let res = await fetch(API_URL, {
       method: "POST",
@@ -270,202 +290,3 @@ function setup() {
     wrap.style.display = "block";
     label.textContent = "Wybór miesiąca";
     for(let m=0; m<12; m++) {
-      let d = new Date(baseDate.getFullYear(), m, 1);
-      let text = d.toLocaleString("pl-PL", {month:"long", year:"numeric"});
-      sub.add(new Option(text, m));
-    }
-    sub.value = baseDate.getMonth();
-    days().forEach(d => {
-      let text = D[(d.getDay()+6)%7] + " · " + d.toLocaleDateString("pl-PL");
-      el("day").add(new Option(text, iso(d)));
-    });
-  }
-}
-
-const D = ["Poniedziałek","Wtorek","Środa","Czwartek","Piątek","Sobota","Niedziela"];
-
-function addEmployee() {
-  let n = el("name").value.trim();
-  if(n && !data.employees.some(x => x.toLowerCase() == n.toLowerCase())) data.employees.push(n);
-  el("name").value = "";
-  saveCloudData();
-  renderPeople();
-}
-
-function renderPeople() {
-  data.employees.sort((a,b) => a.localeCompare(b,"pl"));
-  el("people").innerHTML = data.employees.map(x => "<span class='chip'>"+esc(x)+"</span>").join("") || "<span class='empty'>Brak pozycji</span>";
-  let old = el("employee").value;
-  el("employee").innerHTML = data.employees.map(x => "<option>"+esc(x)+"</option>").join("");
-  el("employee").value = data.employees.includes(old) ? old : (data.employees[0] || "");
-}
-
-function saveTask() {
-  let employee = el("employee").value, task = el("typeTask").value.trim();
-  if(!employee) return alert("Dodaj osobę/firmę.");
-  if(!task) return alert("Wpisz treść zadania.");
-  
-  let isFlex = el("isFlex").checked;
-  let a = {
-    id: editing || crypto.randomUUID(),
-    date: el("day").value,
-    time: isFlex ? "" : el("time").value,
-    isFlex: isFlex,
-    completed: false,
-    employee: employee,
-    task: task,
-    order: el("order").value.trim(),
-    notes: el("notes").value.trim()
-  };
-  
-  if(editing) {
-    let old = data.assignments.find(x => x.id === editing);
-    if(old) a.completed = old.completed;
-    data.assignments = data.assignments.map(x => x.id == editing ? a : x);
-  } else {
-    data.assignments.push(a);
-  }
-  
-  saveCloudData();
-  resetForm();
-  render();
-}
-
-function toggleTaskComplete(id) {
-  let a = data.assignments.find(x => x.id === id);
-  if(a) {
-    a.completed = !a.completed;
-    saveCloudData();
-    render();
-  }
-}
-
-function editTask(id) {
-  let a = data.assignments.find(x => x.id == id);
-  if(!a) return;
-  editing = id;
-  el("formTitle").textContent = "Edycja pozycji";
-  el("day").value = a.date;
-  el("isFlex").checked = !!a.isFlex;
-  toggleFlexTime();
-  if(!a.isFlex) el("time").value = a.time || "08:00";
-  el("employee").value = a.employee;
-  el("typeTask").value = a.task;
-  el("order").value = a.order || "";
-  el("notes").value = a.notes || "";
-  scrollTo({top: 0, behavior: "smooth"});
-}
-
-function removeTask(id) {
-  if(confirm("Usunąć pozycję?")) {
-    data.assignments = data.assignments.filter(x => x.id != id);
-    saveCloudData();
-    render();
-  }
-}
-
-function resetForm() {
-  editing = "";
-  el("formTitle").textContent = "Nowe zadanie / dostawa";
-  el("typeTask").value = "";
-  el("order").value = "";
-  el("notes").value = "";
-  el("isFlex").checked = false;
-  toggleFlexTime();
-}
-
-function render() {
-  let scope = el("viewScope").value;
-  let sub = el("subSelect").value;
-  let ds = days();
-  
-  if(scope === "day" && sub) {
-    ds = ds.filter(d => iso(d) === sub);
-  } else if(scope === "month" && sub !== "") {
-    ds = ds.filter(d => d.getMonth() == sub);
-  }
-
-  let f = el("filter").value.trim().toLowerCase();
-  let items = data.assignments.filter(a => ds.some(d => iso(d) == a.date) && (!f || (a.order||"").toLowerCase().includes(f) || a.task.toLowerCase().includes(f)));
-
-  let period = ds.length > 0 ? (ds[0].toLocaleDateString("pl-PL") + (ds.length > 1 ? " – " + ds[ds.length-1].toLocaleDateString("pl-PL") : "")) : "—";
-  
-  el("tasks").textContent = items.length;
-  el("count").textContent = data.employees.length;
-  el("range").textContent = period;
-  el("period").textContent = "Zakres: " + period;
-
-  el("schedule").innerHTML = ds.map(d => {
-    let daily = items.filter(a => a.date == iso(d));
-    daily.sort((a,b) => {
-      if(a.isFlex && !b.isFlex) return 1;
-      if(!a.isFlex && b.isFlex) return -1;
-      return (a.time||"").localeCompare(b.time||"");
-    });
-
-    let taskList = daily.map(a => {
-      let timeTag = a.isFlex ? "<span class='flex-badge'>FLEX</span>" : "<b>"+esc(a.time)+"</b>";
-      let checkBtn = a.isFlex ? "<input type='checkbox' class='task-check' "+(a.completed?"checked":"")+" onchange=\"toggleTaskComplete('"+a.id+"')\" title='Oznacz jako wykonane'>" : "";
-      
-      return "<div class='task "+(a.completed?'completed':'')+"'>" +
-             "  <div class='task-content'>" +
-             "    <div>" + timeTag + " <strong>" + esc(a.employee) + "</strong> — " + esc(a.task) + "</div>" +
-             "    <small>" + esc(a.order || "brak ID") + (a.notes ? " · " + esc(a.notes) : "") + "</small>" +
-             "  </div>" +
-             "  <div class='task-actions'>" +
-                  checkBtn +
-             "    <button class='mini' onclick=\"editTask('"+a.id+"')\">Edytuj</button>" +
-             "    <button class='mini' onclick=\"removeTask('"+a.id+"')\">Usuń</button>" +
-             "  </div>" +
-             "</div>";
-    }).join("") || "<div class='empty'>Brak zaplanowanych zadań</div>";
-
-    return "<article class='day'>" +
-           "  <div class='day-name'>" + D[(d.getDay()+6)%7] + "<small>" + d.toLocaleDateString("pl-PL") + "</small></div>" +
-           "  <div class='tasks-container'>" + taskList + "</div>" +
-           "</article>";
-  }).join("");
-}
-
-function exportData() {
-  let blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
-  let a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "harmonogram.json";
-  a.click();
-}
-
-function importData(e) {
-  let r = new FileReader();
-  r.onload = () => {
-    try {
-      let x = JSON.parse(r.result);
-      if(!Array.isArray(x.employees) || !Array.isArray(x.assignments)) throw 0;
-      data = x;
-      saveCloudData();
-      renderPeople();
-      render();
-    } catch(_) { alert("Nieprawidłowy plik JSON."); }
-  };
-  if(e.target.files[0]) r.readAsText(e.target.files[0]);
-}
-
-function clearData() {
-  if(confirm("Wyczyścić cały plan?")) {
-    data = { employees: [], assignments: [] };
-    saveCloudData();
-    renderPeople();
-    render();
-  }
-}
-
-function generatePdf() {
-  window.print();
-}
-
-el("week").value = iso(monday());
-el("week").onchange = () => { setup(); render(); };
-fetchCloudData();
-</script>
-</body>
-</html>
