@@ -61,7 +61,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 <header>
   <div>
     <h1>Harmonogram zadań i dostaw</h1>
-    <p>System operacyjny · Synchronizacja w chmurze · <span id="appVersion">Wersja 1.2</span></p>
+    <p>System operacyjny · Praca w locie · <span id="appVersion">Wersja 1.3</span></p>
   </div>
   <button onclick="generatePdf()">⬇ Pobierz PDF</button>
 </header>
@@ -96,9 +96,9 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <button class="secondary" onclick="resetForm()">Wyczyść formularz</button>
   </div>
 
-  <h3>Udostępnianie i Archiwum</h3>
+  <h3>Zarządzanie i udostępnianie</h3>
   <div class="actions">
-    <button onclick="copyShareLink()">🔗 Kopiuj link z aktualnym stanem</button>
+    <button onclick="copyShareLink()">🔗 Kopiuj link sesji</button>
     <button class="secondary" onclick="exportData()">Pobierz plik JSON</button>
     <label class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
     <button class="danger" onclick="clearData()">Wyczyść plan</button>
@@ -137,7 +137,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 </main>
 
 <script>
-const CURRENT_VERSION = "Wersja 1.2";
+const CURRENT_VERSION = "Wersja 1.3";
 document.getElementById("appVersion").textContent = CURRENT_VERSION;
 
 let data = { employees: [], assignments: [] }, editing = "";
@@ -152,14 +152,14 @@ function loadData() {
       let decoded = JSON.parse(decodeURIComponent(window.location.hash.substring(1)));
       if(decoded && Array.isArray(decoded.assignments)) {
         data = decoded;
-        localStorage.setItem("harmonogram-zadan-v2", JSON.stringify(data));
+        localStorage.setItem("harmonogram-zadan-v3", JSON.stringify(data));
       }
     } else {
-      let local = localStorage.getItem("harmonogram-zadan-v2");
+      let local = localStorage.getItem("harmonogram-zadan-v3");
       if(local) data = JSON.parse(local);
     }
   } catch(e) {
-    let local = localStorage.getItem("harmonogram-zadan-v2");
+    let local = localStorage.getItem("harmonogram-zadan-v3");
     if(local) data = JSON.parse(local);
   }
   renderPeople();
@@ -168,14 +168,17 @@ function loadData() {
 }
 
 function save() {
-  localStorage.setItem("harmonogram-zadan-v2", JSON.stringify(data));
+  localStorage.setItem("harmonogram-zadan-v3", JSON.stringify(data));
+  // Automatyczna aktualizacja hasha w pasku adresu, aby link w każdej chwili odzwierciedlał aktualny stan w locie
+  try {
+    let jsonStr = encodeURIComponent(JSON.stringify(data));
+    history.replaceState(null, "", "#" + jsonStr);
+  } catch(e) {}
 }
 
 function copyShareLink() {
-  let jsonStr = encodeURIComponent(JSON.stringify(data));
-  let url = window.location.origin + window.location.pathname + "#" + jsonStr;
-  navigator.clipboard.writeText(url).then(() => {
-    alert("Skopiowano link z aktualnym stanem do schowka! Wyślij go współpracownikom.");
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    alert("Skopiowano gotowy link sesji do schowka! Każdy kto go otworzy, zobaczy dokładnie to samo co Ty.");
   });
 }
 
