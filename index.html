@@ -35,7 +35,6 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 .print-controls{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
 .print-controls select{min-width:145px}
 .muted{color:#64748b;font-size:.85rem}
-.sync-status{font-size:0.75rem;padding:6px;border-radius:4px;background:#eef4fb;color:var(--navy);font-weight:bold;display:block;margin-top:8px;text-align:center;}
 .metrics{display:flex;gap:12px;margin:15px 0;flex-wrap:wrap}
 .metric{border:1px solid var(--line);background:var(--pale);border-radius:7px;padding:8px 12px;min-width:125px}
 .metric span{display:block;font-size:.68rem;font-weight:800;color:#60738a}
@@ -62,7 +61,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 <header>
   <div>
     <h1>Harmonogram zadań i dostaw</h1>
-    <p>System operacyjny · Synchronizacja w chmurze</p>
+    <p>System operacyjny · Synchronizacja w chmurze · <span id="appVersion">Wersja 1.2</span></p>
   </div>
   <button onclick="generatePdf()">⬇ Pobierz PDF</button>
 </header>
@@ -97,14 +96,13 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <button class="secondary" onclick="resetForm()">Wyczyść formularz</button>
   </div>
 
-  <h3>Synchronizacja Zespołu</h3>
+  <h3>Udostępnianie i Archiwum</h3>
   <div class="actions">
-    <button onclick="fetchCloudData(true)">🔄 Pobierz z chmury</button>
-    <button class="secondary" onclick="exportData()">Eksportuj kopię JSON</button>
+    <button onclick="copyShareLink()">🔗 Kopiuj link z aktualnym stanem</button>
+    <button class="secondary" onclick="exportData()">Pobierz plik JSON</button>
     <label class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
     <button class="danger" onclick="clearData()">Wyczyść plan</button>
   </div>
-  <span id="syncStatus" class="sync-status">Status: Ładowanie...</span>
 </aside>
 
 <section class="card">
@@ -139,27 +137,26 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 </main>
 
 <script>
-// Klucz współdzielony w chmurze (darmowy bin npo/jsonbin alternatywa oparta na publicznym storage binie)
-const CLOUD_BIN = "https://api.jsonbin.io/v3/b/6612a3d7ae3c7198a6fa2b87"; // Publiczny magazyn dla harmonogramu
+const CURRENT_VERSION = "Wersja 1.2";
+document.getElementById("appVersion").textContent = CURRENT_VERSION;
+
 let data = { employees: [], assignments: [] }, editing = "";
 
 const el = id => document.getElementById(id);
 const esc = x => String(x||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 const iso = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 
-async function fetchCloudData(showAlert = false) {
-  el("syncStatus").textContent = "Status: Pobieranie z chmury...";
+function loadData() {
   try {
-    let res = await fetch(CLOUD_BIN + "/latest", {
-      headers: { "X-Access-Key": "$2a$10$7Xv3qgH2v8k... (public)" } // Public read
-    });
-    if(res.ok) {
-      let json = await res.json();
-      if(json && json.record && Array.isArray(json.record.assignments)) {
-        data = json.record;
+    if(window.location.hash.length > 5) {
+      let decoded = JSON.parse(decodeURIComponent(window.location.hash.substring(1)));
+      if(decoded && Array.isArray(decoded.assignments)) {
+        data = decoded;
         localStorage.setItem("harmonogram-zadan-v2", JSON.stringify(data));
-        if(showAlert) alert("Pomyślnie pobrano najnowsze dane z chmury!");
       }
+    } else {
+      let local = localStorage.getItem("harmonogram-zadan-v2");
+      if(local) data = JSON.parse(local);
     }
   } catch(e) {
     let local = localStorage.getItem("harmonogram-zadan-v2");
@@ -168,25 +165,18 @@ async function fetchCloudData(showAlert = false) {
   renderPeople();
   setup();
   render();
-  el("syncStatus").textContent = "Status: Zsynchronizowano";
 }
 
-async function saveCloudData() {
+function save() {
   localStorage.setItem("harmonogram-zadan-v2", JSON.stringify(data));
-  el("syncStatus").textContent = "Status: Zapisywanie w chmurze...";
-  try {
-    let res = await fetch(CLOUD_BIN, {
-      method: "PUT",
-      headers: { 
-        "Content-Type": "application/json",
-        "X-Master-Key": "$2a$10$W2V8..." // Zapasowy klucz zapisu
-      },
-      body: JSON.stringify(data)
-    });
-    el("syncStatus").textContent = "Status: Zapisano w chmurze pomyślnie!";
-  } catch(e) {
-    el("syncStatus").textContent = "Status: Zapisano lokalnie (offline)";
-  }
+}
+
+function copyShareLink() {
+  let jsonStr = encodeURIComponent(JSON.stringify(data));
+  let url = window.location.origin + window.location.pathname + "#" + jsonStr;
+  navigator.clipboard.writeText(url).then(() => {
+    alert("Skopiowano link z aktualnym stanem do schowka! Wyślij go współpracownikom.");
+  });
 }
 
 function monday() {
@@ -281,7 +271,7 @@ function addEmployee() {
   let n = el("name").value.trim();
   if(n && !data.employees.some(x => x.toLowerCase() == n.toLowerCase())) data.employees.push(n);
   el("name").value = "";
-  saveCloudData();
+  save();
   renderPeople();
 }
 
@@ -319,7 +309,7 @@ function saveTask() {
     data.assignments.push(a);
   }
   
-  saveCloudData();
+  save();
   resetForm();
   render();
 }
@@ -328,7 +318,7 @@ function toggleTaskComplete(id) {
   let a = data.assignments.find(x => x.id === id);
   if(a) {
     a.completed = !a.completed;
-    saveCloudData();
+    save();
     render();
   }
 }
@@ -352,7 +342,7 @@ function editTask(id) {
 function removeTask(id) {
   if(confirm("Usunąć pozycję?")) {
     data.assignments = data.assignments.filter(x => x.id != id);
-    saveCloudData();
+    save();
     render();
   }
 }
@@ -435,7 +425,7 @@ function importData(e) {
       let x = JSON.parse(r.result);
       if(!Array.isArray(x.employees) || !Array.isArray(x.assignments)) throw 0;
       data = x;
-      saveCloudData();
+      save();
       renderPeople();
       render();
     } catch(_) { alert("Nieprawidłowy plik JSON."); }
@@ -446,7 +436,7 @@ function importData(e) {
 function clearData() {
   if(confirm("Wyczyścić cały plan?")) {
     data = { employees: [], assignments: [] };
-    saveCloudData();
+    save();
     renderPeople();
     render();
   }
@@ -458,7 +448,7 @@ function generatePdf() {
 
 el("week").value = iso(monday());
 el("week").onchange = () => { setup(); render(); };
-fetchCloudData();
+loadData();
 </script>
 </body>
 </html>
