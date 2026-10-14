@@ -35,6 +35,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 .print-controls{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
 .print-controls select{min-width:145px}
 .muted{color:#64748b;font-size:.85rem}
+.sync-status{font-size:0.75rem;padding:6px;border-radius:4px;background:#eef4fb;color:var(--navy);font-weight:bold;display:block;margin-top:8px;text-align:center;}
 .metrics{display:flex;gap:12px;margin:15px 0;flex-wrap:wrap}
 .metric{border:1px solid var(--line);background:var(--pale);border-radius:7px;padding:8px 12px;min-width:125px}
 .metric span{display:block;font-size:.68rem;font-weight:800;color:#60738a}
@@ -61,7 +62,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 <header>
   <div>
     <h1>Harmonogram zadań i dostaw</h1>
-    <p>System operacyjny · Praca w locie · <span id="appVersion">Wersja 1.3</span></p>
+    <p>System operacyjny · Chmura w locie (npoint) · <span id="appVersion">Wersja 1.4</span></p>
   </div>
   <button onclick="generatePdf()">⬇ Pobierz PDF</button>
 </header>
@@ -96,13 +97,14 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <button class="secondary" onclick="resetForm()">Wyczyść formularz</button>
   </div>
 
-  <h3>Zarządzanie i udostępnianie</h3>
+  <h3>Synchronizacja</h3>
   <div class="actions">
-    <button onclick="copyShareLink()">🔗 Kopiuj link sesji</button>
-    <button class="secondary" onclick="exportData()">Pobierz plik JSON</button>
+    <button onclick="fetchCloudData()">🔄 Odśwież z chmury</button>
+    <button class="secondary" onclick="exportData()">Eksportuj JSON</button>
     <label class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
     <button class="danger" onclick="clearData()">Wyczyść plan</button>
   </div>
+  <span id="syncStatus" class="sync-status">Status: Gotowy</span>
 </aside>
 
 <section class="card">
@@ -137,49 +139,61 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 </main>
 
 <script>
-const CURRENT_VERSION = "Wersja 1.3";
+const CURRENT_VERSION = "Wersja 1.4";
 document.getElementById("appVersion").textContent = CURRENT_VERSION;
 
+const API_URL = "https://api.npoint.io/8fffe0f77e84f6816676";
 let data = { employees: [], assignments: [] }, editing = "";
 
 const el = id => document.getElementById(id);
 const esc = x => String(x||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 const iso = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
 
-function loadData() {
+async function fetchCloudData() {
+  el("syncStatus").textContent = "Status: Pobieranie...";
   try {
-    if(window.location.hash.length > 5) {
-      let decoded = JSON.parse(decodeURIComponent(window.location.hash.substring(1)));
-      if(decoded && Array.isArray(decoded.assignments)) {
-        data = decoded;
-        localStorage.setItem("harmonogram-zadan-v3", JSON.stringify(data));
+    let res = await fetch(API_URL);
+    if(res.ok) {
+      let json = await res.json();
+      if(json && Array.isArray(json.assignments)) {
+        data = json;
+        localStorage.setItem("harmonogram-zadan-v4", JSON.stringify(data));
       }
-    } else {
-      let local = localStorage.getItem("harmonogram-zadan-v3");
-      if(local) data = JSON.parse(local);
     }
   } catch(e) {
-    let local = localStorage.getItem("harmonogram-zadan-v3");
+    let local = localStorage.getItem("harmonogram-zadan-v4");
     if(local) data = JSON.parse(local);
   }
   renderPeople();
   setup();
   render();
+  el("syncStatus").textContent = "Status: Zsynchronizowano z chmurą";
 }
 
-function save() {
-  localStorage.setItem("harmonogram-zadan-v3", JSON.stringify(data));
-  // Automatyczna aktualizacja hasha w pasku adresu, aby link w każdej chwili odzwierciedlał aktualny stan w locie
+async function saveCloudData() {
+  localStorage.setItem("harmonogram-zadan-v4", JSON.stringify(data));
+  el("syncStatus").textContent = "Status: Zapisywanie w chmurze...";
   try {
-    let jsonStr = encodeURIComponent(JSON.stringify(data));
-    history.replaceState(null, "", "#" + jsonStr);
-  } catch(e) {}
-}
-
-function copyShareLink() {
-  navigator.clipboard.writeText(window.location.href).then(() => {
-    alert("Skopiowano gotowy link sesji do schowka! Każdy kto go otworzy, zobaczy dokładnie to samo co Ty.");
-  });
+    let res = await fetch(API_URL, {
+      method: "POST", // npoint.io używa POST lub PUT do zapisu w zależności od konfiguracji
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data)
+    });
+    if(res.ok) {
+      el("syncStatus").textContent = "Status: Zapisano w chmurze pomyślnie!";
+    } else {
+      // Fallback z metodą PUT
+      let resPut = await fetch(API_URL, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data)
+      });
+      if(resPut.ok) el("syncStatus").textContent = "Status: Zapisano w chmurze pomyślnie!";
+      else el("syncStatus").textContent = "Status: Zapisano lokalnie";
+    }
+  } catch(e) {
+    el("syncStatus").textContent = "Status: Zapisano lokalnie (brak sieci)";
+  }
 }
 
 function monday() {
@@ -274,7 +288,7 @@ function addEmployee() {
   let n = el("name").value.trim();
   if(n && !data.employees.some(x => x.toLowerCase() == n.toLowerCase())) data.employees.push(n);
   el("name").value = "";
-  save();
+  saveCloudData();
   renderPeople();
 }
 
@@ -312,7 +326,7 @@ function saveTask() {
     data.assignments.push(a);
   }
   
-  save();
+  saveCloudData();
   resetForm();
   render();
 }
@@ -321,7 +335,7 @@ function toggleTaskComplete(id) {
   let a = data.assignments.find(x => x.id === id);
   if(a) {
     a.completed = !a.completed;
-    save();
+    saveCloudData();
     render();
   }
 }
@@ -345,7 +359,7 @@ function editTask(id) {
 function removeTask(id) {
   if(confirm("Usunąć pozycję?")) {
     data.assignments = data.assignments.filter(x => x.id != id);
-    save();
+    saveCloudData();
     render();
   }
 }
@@ -368,90 +382,4 @@ function render() {
   if(scope === "day" && sub) {
     ds = ds.filter(d => iso(d) === sub);
   } else if(scope === "month" && sub !== "") {
-    ds = ds.filter(d => d.getMonth() == sub);
-  }
-
-  let f = el("filter").value.trim().toLowerCase();
-  let items = data.assignments.filter(a => ds.some(d => iso(d) == a.date) && (!f || (a.order||"").toLowerCase().includes(f) || a.task.toLowerCase().includes(f)));
-
-  let period = ds.length > 0 ? (ds[0].toLocaleDateString("pl-PL") + (ds.length > 1 ? " – " + ds[ds.length-1].toLocaleDateString("pl-PL") : "")) : "—";
-  
-  el("tasks").textContent = items.length;
-  el("count").textContent = data.employees.length;
-  el("range").textContent = period;
-  el("period").textContent = "Zakres: " + period;
-
-  el("schedule").innerHTML = ds.map(d => {
-    let daily = items.filter(a => a.date == iso(d));
-    daily.sort((a,b) => {
-      if(a.isFlex && !b.isFlex) return 1;
-      if(!a.isFlex && b.isFlex) return -1;
-      return (a.time||"").localeCompare(b.time||"");
-    });
-
-    let taskList = daily.map(a => {
-      let timeTag = a.isFlex ? "<span class='flex-badge'>FLEX</span>" : "<b>"+esc(a.time)+"</b>";
-      let checkBtn = a.isFlex ? "<input type='checkbox' class='task-check' "+(a.completed?"checked":"")+" onchange=\"toggleTaskComplete('"+a.id+"')\" title='Oznacz jako wykonane'>" : "";
-      
-      return "<div class='task "+(a.completed?'completed':'')+"'>" +
-             "  <div class='task-content'>" +
-             "    <div>" + timeTag + " <strong>" + esc(a.employee) + "</strong> — " + esc(a.task) + "</div>" +
-             "    <small>" + esc(a.order || "brak ID") + (a.notes ? " · " + esc(a.notes) : "") + "</small>" +
-             "  </div>" +
-             "  <div class='task-actions'>" +
-                  checkBtn +
-             "    <button class='mini' onclick=\"editTask('"+a.id+"')\">Edytuj</button>" +
-             "    <button class='mini' onclick=\"removeTask('"+a.id+"')\">Usuń</button>" +
-             "  </div>" +
-             "</div>";
-    }).join("") || "<div class='empty'>Brak zaplanowanych zadań</div>";
-
-    return "<article class='day'>" +
-           "  <div class='day-name'>" + D[(d.getDay()+6)%7] + "<small>" + d.toLocaleDateString("pl-PL") + "</small></div>" +
-           "  <div class='tasks-container'>" + taskList + "</div>" +
-           "</article>";
-  }).join("");
-}
-
-function exportData() {
-  let blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
-  let a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "harmonogram.json";
-  a.click();
-}
-
-function importData(e) {
-  let r = new FileReader();
-  r.onload = () => {
-    try {
-      let x = JSON.parse(r.result);
-      if(!Array.isArray(x.employees) || !Array.isArray(x.assignments)) throw 0;
-      data = x;
-      save();
-      renderPeople();
-      render();
-    } catch(_) { alert("Nieprawidłowy plik JSON."); }
-  };
-  if(e.target.files[0]) r.readAsText(e.target.files[0]);
-}
-
-function clearData() {
-  if(confirm("Wyczyścić cały plan?")) {
-    data = { employees: [], assignments: [] };
-    save();
-    renderPeople();
-    render();
-  }
-}
-
-function generatePdf() {
-  window.print();
-}
-
-el("week").value = iso(monday());
-el("week").onchange = () => { setup(); render(); };
-loadData();
-</script>
-</body>
-</html>
+    ds = ds.filter(d => d.getMonth() == sub
