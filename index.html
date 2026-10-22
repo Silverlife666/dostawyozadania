@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Harmonogram zadań i dostaw</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{--navy:#123b69;--ink:#152238;--pale:#eef4fb;--line:#cbd8e6;--green:#16825d}
 *{box-sizing:border-box}
@@ -36,6 +37,8 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 .print-controls select{min-width:145px}
 .muted{color:#64748b;font-size:.85rem}
 .sync-status{font-size:0.75rem;padding:6px;border-radius:4px;background:#eef4fb;color:var(--navy);font-weight:bold;display:block;margin-top:8px;text-align:center;}
+.user-bar{display:flex;align-items:center;gap:9px}.user-badge{font-size:.78rem;font-weight:800;background:#ffffff20;border:1px solid #ffffff45;border-radius:14px;padding:6px 9px}.header-action{background:#fff;color:var(--navy)}
+.login-screen{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:20px;background:#123b69e8}.login-card{width:min(410px,100%);background:#fff;border-radius:14px;padding:28px;box-shadow:0 24px 70px #001a}.login-card h2{font-size:1.4rem}.login-card p{color:#64748b;line-height:1.45}.login-error{min-height:22px;color:#ae3d3d;font-size:.86rem;margin-top:10px}.admin-panel{display:none;margin-top:18px;border-top:1px solid var(--line);padding-top:18px}.admin-panel.visible{display:block}.permissions{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:10px 0}.permissions .checkbox{font-size:.76rem;margin:0}.hidden{display:none!important}
 .metrics{display:flex;gap:12px;margin:15px 0;flex-wrap:wrap}
 .metric{border:1px solid var(--line);background:var(--pale);border-radius:7px;padding:8px 12px;min-width:125px}
 .metric span{display:block;font-size:.68rem;font-weight:800;color:#60738a}
@@ -64,8 +67,18 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
     <h1>Harmonogram zadań i dostaw</h1>
     <p>System operacyjny · Synchronizacja w locie · <span id="appVersion">Wersja 1.9</span></p>
   </div>
-  <button onclick="generatePdf()">⬇ Pobierz PDF</button>
+  <div class="user-bar"><span id="userBadge" class="user-badge">Nie zalogowano</span><button id="logoutButton" class="header-action hidden" onclick="logout()">Wyloguj</button><button onclick="generatePdf()">⬇ Pobierz PDF</button></div>
 </header>
+<div id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <h2>Logowanie do harmonogramu</h2>
+    <p>Wpisz adres e-mail przypisany przez administratora oraz swój PIN.</p>
+    <label>Login / e-mail<input id="loginEmail" type="email" autocomplete="username" placeholder="np. pracownik@firma.pl"></label>
+    <label>PIN<input id="loginPin" type="password" inputmode="numeric" autocomplete="current-password" placeholder="••••"></label>
+    <div class="actions"><button onclick="login()">Zaloguj</button></div>
+    <div id="loginError" class="login-error"></div>
+  </div>
+</div>
 <main class="layout">
 <aside class="card sticky controls">
   <h2>Dane harmonogramu</h2>
@@ -73,7 +86,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
   <label class="checkbox"><input id="workSaturday" type="checkbox" onchange="setup()"> Pracująca sobota</label>
   
   <h3>Osoba / Firma</h3>
-  <div class="employee"><input id="name" placeholder="Nazwa firmy lub imię"><button onclick="addEmployee()">Dodaj</button></div>
+  <div class="employee"><input id="name" placeholder="Nazwa firmy lub imię"><button id="addEmployeeButton" onclick="addEmployee()">Dodaj</button></div>
   <div id="people" class="chips"></div>
 
   <h3 id="formTitle">Nowe zadanie / dostawa</h3>
@@ -93,7 +106,7 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
   <label>Uwagi<textarea id="notes"></textarea></label>
 
   <div class="actions">
-    <button onclick="saveTask()">Zapisz pozycję</button>
+    <button id="saveTaskButton" onclick="saveTask()">Zapisz pozycję</button>
     <button class="secondary" onclick="resetForm()">Wyczyść formularz</button>
   </div>
 
@@ -101,10 +114,23 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
   <div class="actions">
     <button onclick="fetchCloudData(true)">🔄 Odśwież z chmury</button>
     <button class="secondary" onclick="exportData()">Eksportuj JSON</button>
-    <label class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
-    <button class="danger" onclick="clearData()">Wyczyść plan</button>
+    <label id="importLabel" class="file">Importuj JSON<input type="file" accept="application/json" onchange="importData(event)"></label>
+    <button id="clearDataButton" class="danger" onclick="clearData()">Wyczyść plan</button>
   </div>
   <span id="syncStatus" class="sync-status">Status: Gotowy</span>
+  <section id="adminPanel" class="admin-panel">
+    <h3>Uprawnienia użytkownika</h3>
+    <label>Użytkownik<select id="managedUser" onchange="showManagedUser()"></select></label>
+    <label>Nazwa wyświetlana<input id="managedName"></label>
+    <label>Rola<select id="managedRole"><option>Administrator</option><option>Właściciel</option><option>Pracownik</option></select></label>
+    <label class="checkbox"><input id="managedActive" type="checkbox"> Konto aktywne</label>
+    <div class="permissions">
+      <label class="checkbox"><input type="checkbox" value="edit_plan"> Edycja planu</label>
+      <label class="checkbox"><input type="checkbox" value="manage_people"> Osoby / firmy</label>
+      <label class="checkbox"><input type="checkbox" value="export_pdf"> Pobieranie PDF</label>
+    </div>
+    <button onclick="saveManagedUser()">Zapisz uprawnienia</button>
+  </section>
 </aside>
 
 <section class="card">
@@ -143,12 +169,115 @@ button,.file{border:0;border-radius:7px;padding:10px 12px;background:var(--navy)
 const CURRENT_VERSION = "Wersja 1.9";
 document.getElementById("appVersion").textContent = CURRENT_VERSION;
 
-const API_URL = "https://api.npoint.io/8fffe0f77e84f6816676";
+// To są dane publicznego klienta Supabase, a nie klucz service_role.
+// Uzupełnij je po utworzeniu projektu Supabase (opis w README).
+const SUPABASE_URL = "";
+const SUPABASE_ANON_KEY = "";
+let supabaseClient = null, sessionUser = null, profile = null, profiles = [];
 let data = { employees: [], assignments: [], lastModified: "—" }, editing = "";
 
 const el = id => document.getElementById(id);
 const esc = x => String(x||"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
 const iso = d => d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+
+function can(permission) {
+  return !!profile && (profile.role === "Administrator" || (profile.permissions || []).includes(permission));
+}
+
+function requirePermission(permission) {
+  if(can(permission)) return true;
+  alert("Nie masz uprawnienia: " + permission + ".");
+  return false;
+}
+
+function applyPermissions() {
+  const toggle = (id, permission) => el(id).classList.toggle("hidden", !can(permission));
+  toggle("saveTaskButton", "edit_plan");
+  toggle("importLabel", "edit_plan");
+  toggle("addEmployeeButton", "manage_people");
+  toggle("clearDataButton", "clear_plan");
+  el("adminPanel").classList.toggle("visible", !!profile && profile.role === "Administrator");
+  el("userBadge").textContent = profile ? `${profile.display_name || sessionUser.email} · ${profile.role}` : "Nie zalogowano";
+  el("logoutButton").classList.toggle("hidden", !profile);
+}
+
+async function loadProfile() {
+  const { data: loaded, error } = await supabaseClient.from("delivery_schedule_users").select("id,display_name,role,permissions,active").eq("id", sessionUser.id).single();
+  if(error) throw new Error("Brak profilu użytkownika. Administrator musi go utworzyć.");
+  if(!loaded.active) throw new Error("Konto jest nieaktywne.");
+  profile = loaded;
+  applyPermissions();
+  if(profile.role === "Administrator") await loadManagedUsers();
+}
+
+async function login() {
+  const email = el("loginEmail").value.trim();
+  const password = el("loginPin").value;
+  if(!email || !password) return el("loginError").textContent = "Podaj login i PIN.";
+  el("loginError").textContent = "Logowanie…";
+  try {
+    if(!SUPABASE_URL || !SUPABASE_ANON_KEY) throw new Error("Aplikacja nie ma jeszcze konfiguracji Supabase.");
+    if(!supabaseClient) supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data: auth, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if(error) throw error;
+    sessionUser = auth.user;
+    await loadProfile();
+    el("loginScreen").classList.add("hidden");
+    await fetchCloudData();
+    el("loginPin").value = "";
+  } catch(error) {
+    profile = null;
+    el("loginError").textContent = error.message || "Nie udało się zalogować.";
+  }
+}
+
+async function logout() {
+  if(supabaseClient) await supabaseClient.auth.signOut();
+  profile = null; sessionUser = null; profiles = [];
+  el("loginScreen").classList.remove("hidden");
+  applyPermissions();
+}
+
+async function restoreSession() {
+  if(!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    el("loginError").textContent = "Brak konfiguracji Supabase. Uzupełnij SUPABASE_URL i SUPABASE_ANON_KEY w kodzie wdrożenia.";
+    return;
+  }
+  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data: { user } } = await supabaseClient.auth.getUser();
+  if(!user) return;
+  try { sessionUser = user; await loadProfile(); el("loginScreen").classList.add("hidden"); await fetchCloudData(); }
+  catch(error) { el("loginError").textContent = error.message || "Nie udało się przywrócić sesji."; }
+}
+
+async function loadManagedUsers() {
+  const { data: loaded, error } = await supabaseClient.from("delivery_schedule_users").select("id,display_name,role,permissions,active").order("display_name");
+  if(error) return alert("Nie udało się pobrać użytkowników: " + error.message);
+  profiles = loaded || [];
+  el("managedUser").innerHTML = profiles.map(item => `<option value="${esc(item.id)}">${esc(item.display_name || item.id)} · ${esc(item.role)}</option>`).join("");
+  showManagedUser();
+}
+
+function showManagedUser() {
+  const selected = profiles.find(item => item.id === el("managedUser").value);
+  if(!selected) return;
+  el("managedName").value = selected.display_name || "";
+  el("managedRole").value = selected.role;
+  el("managedActive").checked = !!selected.active;
+  document.querySelectorAll("#adminPanel input[type=checkbox]").forEach(box => box.checked = selected.role === "Administrator" || (selected.permissions || []).includes(box.value));
+}
+
+async function saveManagedUser() {
+  if(!requirePermission("manage_users")) return;
+  const id = el("managedUser").value;
+  const permissions = Array.from(document.querySelectorAll("#adminPanel input[type=checkbox]:checked"), box => box.value);
+  const { error } = await supabaseClient.from("delivery_schedule_users").update({
+    display_name: el("managedName").value.trim(), role: el("managedRole").value, permissions, active: el("managedActive").checked
+  }).eq("id", id);
+  if(error) return alert("Nie zapisano uprawnień: " + error.message);
+  await loadManagedUsers();
+  alert("Uprawnienia zapisane.");
+}
 
 function updateLastChangeDisplay() {
   if(data.lastModified && data.lastModified !== "—") {
@@ -161,32 +290,14 @@ function updateLastChangeDisplay() {
 async function fetchCloudData(showAlert = false) {
   el("syncStatus").textContent = "Status: Pobieranie z chmury...";
   try {
-    let controller = new AbortController();
-    let timeoutId = setTimeout(() => controller.abort(), 4000); // Awaryjne przerwanie po 4s
-
-    let res = await fetch(API_URL + "?nocache=" + Date.now(), { 
-      cache: "no-store",
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if(res.ok) {
-      let json = await res.json();
-      if(json && Array.isArray(json.assignments)) {
-        data = json;
-        if(!data.lastModified) data.lastModified = "—";
-        localStorage.setItem("harmonogram-zadan-v9", JSON.stringify(data));
-        if(showAlert) alert("Pomyślnie pobrano najnowsze dane z chmury!");
-      }
-    } else {
-      throw new Error("Błąd serwera");
-    }
+    const { data: row, error } = await supabaseClient.from("delivery_schedule_state").select("payload").eq("id", 1).maybeSingle();
+    if(error) throw error;
+    if(row && row.payload && Array.isArray(row.payload.assignments)) data = row.payload;
+    if(!data.lastModified) data.lastModified = "—";
+    if(showAlert) alert("Pomyślnie pobrano najnowsze dane z Supabase.");
   } catch(e) {
-    // Awaryjny fallback na pamięć lokalną, żeby aplikacja nigdy nie wisiała
-    let local = localStorage.getItem("harmonogram-zadan-v9");
-    if(local) {
-      try { data = JSON.parse(local); } catch(_) {}
-    }
+    el("syncStatus").textContent = "Błąd Supabase: " + (e.message || "brak połączenia");
+    return;
   }
   renderPeople();
   setup();
@@ -196,26 +307,19 @@ async function fetchCloudData(showAlert = false) {
 }
 
 async function saveCloudData() {
+  if(!can("edit_plan")) return alert("Nie masz uprawnienia do edycji planu.");
   let now = new Date();
   data.lastModified = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0") + " (" + String(now.getDate()).padStart(2,"0") + "." + String(now.getMonth()+1).padStart(2,"0") + ")";
 
-  localStorage.setItem("harmonogram-zadan-v9", JSON.stringify(data));
   updateLastChangeDisplay();
   el("syncStatus").textContent = "Status: Zapisywanie w chmurze...";
   
   try {
-    let res = await fetch(API_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data)
-    });
-    if(res.ok) {
-      el("syncStatus").textContent = "Status: Zapisano w chmurze!";
-    } else {
-      el("syncStatus").textContent = "Status: Zapisano lokalnie";
-    }
+    const { error } = await supabaseClient.rpc("save_delivery_schedule", { next_payload: data });
+    if(error) throw error;
+    el("syncStatus").textContent = "Status: Zapisano w Supabase.";
   } catch(e) {
-    el("syncStatus").textContent = "Status: Zapisano lokalnie (offline)";
+    el("syncStatus").textContent = "Nie zapisano: " + (e.message || "Supabase jest niedostępny");
   }
 }
 
@@ -308,6 +412,7 @@ function setup() {
 const D = ["Poniedziałek","Wtorek","Środa","Czwartek","Piątek","Sobota","Niedziela"];
 
 function addEmployee() {
+  if(!requirePermission("manage_people")) return;
   let n = el("name").value.trim();
   if(n && !data.employees.some(x => x.toLowerCase() == n.toLowerCase())) data.employees.push(n);
   el("name").value = "";
@@ -324,6 +429,7 @@ function renderPeople() {
 }
 
 function saveTask() {
+  if(!requirePermission("edit_plan")) return;
   let employee = el("employee").value, task = el("typeTask").value.trim();
   if(!employee) return alert("Dodaj osobę/firmę.");
   if(!task) return alert("Wpisz treść zadania.");
@@ -355,6 +461,7 @@ function saveTask() {
 }
 
 function toggleTaskComplete(id) {
+  if(!requirePermission("edit_plan")) return;
   let a = data.assignments.find(x => x.id === id);
   if(a) {
     a.completed = !a.completed;
@@ -364,6 +471,7 @@ function toggleTaskComplete(id) {
 }
 
 function editTask(id) {
+  if(!requirePermission("edit_plan")) return;
   let a = data.assignments.find(x => x.id == id);
   if(!a) return;
   editing = id;
@@ -380,6 +488,7 @@ function editTask(id) {
 }
 
 function removeTask(id) {
+  if(!requirePermission("edit_plan")) return;
   if(confirm("Usunąć pozycję?")) {
     data.assignments = data.assignments.filter(x => x.id != id);
     saveCloudData();
@@ -459,6 +568,7 @@ function exportData() {
 }
 
 function importData(e) {
+  if(!requirePermission("edit_plan")) return;
   let r = new FileReader();
   r.onload = () => {
     try {
@@ -474,6 +584,7 @@ function importData(e) {
 }
 
 function clearData() {
+  if(!profile || profile.role !== "Administrator") return alert("Tylko Administrator może wyczyścić plan.");
   if(confirm("Wyczyścić cały plan?")) {
     data = { employees: [], assignments: [], lastModified: "Wyczyszczono" };
     saveCloudData();
@@ -482,13 +593,42 @@ function clearData() {
   }
 }
 
+function pdfText(value) {
+  const chars = {"ą":"a","ć":"c","ę":"e","ł":"l","ń":"n","ó":"o","ś":"s","ź":"z","ż":"z","Ą":"A","Ć":"C","Ę":"E","Ł":"L","Ń":"N","Ó":"O","Ś":"S","Ź":"Z","Ż":"Z","–":"-","—":"-","·":"/"};
+  return String(value || "").replace(/[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ–—·]/g, char => chars[char] || char).replace(/[()\\]/g, char => "\\" + char);
+}
+function pdfLines(value, max = 92) { let words = pdfText(value).split(/\s+/), lines = [], current = ""; words.forEach(word => { let next = current ? current + " " + word : word; if(next.length > max && current) { lines.push(current); current = word; } else current = next; }); if(current) lines.push(current); return lines; }
+function buildPdf(pages) {
+  const pageIds = pages.map((_, index) => 3 + index), font = 3 + pages.length, stream = font + 1, objects = [];
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objects[2] = `<< /Type /Pages /Kids [${pageIds.map(id => id + " 0 R").join(" ")}] /Count ${pages.length} >>`;
+  pages.forEach((page, index) => objects[3 + index] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 841.89 595.28] /Resources << /Font << /F1 ${font} 0 R /F2 ${font + 1} 0 R >> >> /Contents ${stream + index} 0 R >>`);
+  objects[font] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+  objects[font + 1] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>";
+  pages.forEach((page, index) => objects[stream + index] = `<< /Length ${page.length} >>\nstream\n${page}\nendstream`);
+  let out = "%PDF-1.4\n", offsets = [0]; for(let i = 1; i < objects.length; i++) { offsets[i] = out.length; out += `${i} 0 obj\n${objects[i]}\nendobj\n`; }
+  const start = out.length; out += `xref\n0 ${objects.length}\n0000000000 65535 f \n`; for(let i = 1; i < objects.length; i++) out += `${String(offsets[i]).padStart(10,"0")} 00000 n \n`;
+  return out + `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`;
+}
 function generatePdf() {
-  window.print();
+  if(!requirePermission("export_pdf")) return;
+  let scope = el("viewScope").value, chosen = el("subSelect").value, visibleDays = days();
+  if(scope === "day" && chosen) visibleDays = visibleDays.filter(day => iso(day) === chosen);
+  if(scope === "month" && chosen !== "") visibleDays = visibleDays.filter(day => day.getMonth() == chosen);
+  const filter = el("filter").value.trim().toLowerCase();
+  const selected = data.assignments.filter(item => visibleDays.some(day => iso(day) === item.date) && (!filter || (item.order || "").toLowerCase().includes(filter) || (item.task || "").toLowerCase().includes(filter)));
+  const pages = [], commands = []; let y = 520;
+  const text = (x, yy, size, value, bold = false) => commands.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${yy} Td (${pdfText(value)}) Tj ET`);
+  const finish = () => { text(52, 20, 7, "Harmonogram zadan i dostaw", false); text(744, 20, 7, `Strona ${pages.length + 1}`, false); pages.push(commands.splice(0).join("\n")); };
+  const header = () => { commands.push("0.07 0.23 0.41 rg 45 490 752 62 re f", "0.94 0.96 0.98 rg 45 452 752 27 re f"); text(62, 530, 20, "HARMONOGRAM ZADAN I DOSTAW", true); text(62, 507, 9, "Wygenerowano: " + new Date().toLocaleString("pl-PL")); text(62, 462, 9, "DATA / GODZINA", true); text(220, 462, 9, "OSOBA / FIRMA", true); text(410, 462, 9, "ZADANIE / ZLECENIE / UWAGI", true); y = 446; };
+  header();
+  visibleDays.forEach(day => { const entries = selected.filter(item => item.date === iso(day)).sort((a,b) => (a.time || "99:99").localeCompare(b.time || "99:99")); const rows = entries.length ? entries : [{ empty: true }]; rows.forEach(item => { const detail = item.empty ? ["Brak zaplanowanych zadan"] : pdfLines(`${item.task}${item.order ? " | " + item.order : ""}${item.notes ? " | " + item.notes : ""}`, 56); const height = Math.max(30, detail.length * 10 + 14); if(y - height < 42) { finish(); header(); } commands.push("0.79 0.85 0.91 RG 0.5 w 45 " + (y-height) + " 752 " + height + " re S"); text(58, y - 16, 9, `${day.toLocaleDateString("pl-PL")} ${item.empty ? "" : (item.isFlex ? "FLEX" : item.time)}`, true); if(!item.empty) text(220, y - 16, 9, item.employee, true); detail.forEach((line, index) => text(410, y - 16 - index * 10, 8, line, index === 0)); y -= height; }); });
+  finish(); const blob = new Blob([buildPdf(pages)], {type:"application/pdf"}), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "harmonogram_" + iso(new Date()) + ".pdf"; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 el("week").value = iso(monday());
 el("week").onchange = () => { setup(); render(); };
-fetchCloudData();
+restoreSession();
 </script>
 </body>
 </html>
