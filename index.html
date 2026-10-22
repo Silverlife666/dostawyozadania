@@ -617,13 +617,39 @@ function generatePdf() {
   if(scope === "month" && chosen !== "") visibleDays = visibleDays.filter(day => day.getMonth() == chosen);
   const filter = el("filter").value.trim().toLowerCase();
   const selected = data.assignments.filter(item => visibleDays.some(day => iso(day) === item.date) && (!filter || (item.order || "").toLowerCase().includes(filter) || (item.task || "").toLowerCase().includes(filter)));
-  const pages = [], commands = []; let y = 520;
-  const text = (x, yy, size, value, bold = false) => commands.push(`BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${yy} Td (${pdfText(value)}) Tj ET`);
-  const finish = () => { text(52, 20, 7, "Harmonogram zadan i dostaw", false); text(744, 20, 7, `Strona ${pages.length + 1}`, false); pages.push(commands.splice(0).join("\n")); };
-  const header = () => { commands.push("0.07 0.23 0.41 rg 45 490 752 62 re f", "0.94 0.96 0.98 rg 45 452 752 27 re f"); text(62, 530, 20, "HARMONOGRAM ZADAN I DOSTAW", true); text(62, 507, 9, "Wygenerowano: " + new Date().toLocaleString("pl-PL")); text(62, 462, 9, "DATA / GODZINA", true); text(220, 462, 9, "OSOBA / FIRMA", true); text(410, 462, 9, "ZADANIE / ZLECENIE / UWAGI", true); y = 446; };
+  const pages = [], commands = []; let y = 0;
+  const text = (x, yy, size, value, bold = false, color = "0.08 0.13 0.21") => commands.push(`${color} rg BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${yy} Td (${pdfText(value)}) Tj ET`);
+  const fill = (x, yy, width, height, color) => commands.push(`${color} rg ${x} ${yy} ${width} ${height} re f`);
+  const border = (x, yy, width, height) => commands.push(`0.72 0.78 0.85 RG 0.45 w ${x} ${yy} ${width} ${height} re S`);
+  const divider = (x1, y1, x2, y2) => commands.push(`0.72 0.78 0.85 RG 0.45 w ${x1} ${y1} m ${x2} ${y2} l S`);
+  const footer = () => { divider(45, 30, 797, 30); text(48, 17, 8, "Harmonogram zadan i dostaw", false, "0.35 0.42 0.51"); text(735, 17, 8, `Strona ${pages.length + 1}`, false, "0.35 0.42 0.51"); pages.push(commands.splice(0).join("\n")); };
+  const header = () => {
+    fill(45, 492, 752, 62, "0.07 0.23 0.41");
+    text(64, 529, 22, "HARMONOGRAM ZADAN I DOSTAW", true, "1 1 1");
+    text(64, 507, 9, "Zakres: " + (visibleDays[0] ? `${visibleDays[0].toLocaleDateString("pl-PL")} - ${visibleDays[visibleDays.length - 1].toLocaleDateString("pl-PL")}` : "brak"), false, "0.82 0.89 0.96");
+    text(625, 507, 8, "Wygenerowano: " + new Date().toLocaleString("pl-PL"), false, "0.82 0.89 0.96");
+    fill(45, 458, 752, 24, "0.13 0.32 0.53");
+    text(57, 467, 9, "DATA / GODZINA", true, "1 1 1"); text(205, 467, 9, "OSOBA / FIRMA", true, "1 1 1"); text(399, 467, 9, "ZADANIE / ZLECENIE / UWAGI", true, "1 1 1");
+    y = 458;
+  };
+  const ensure = height => { if(y - height < 46) { footer(); header(); } };
   header();
-  visibleDays.forEach(day => { const entries = selected.filter(item => item.date === iso(day)).sort((a,b) => (a.time || "99:99").localeCompare(b.time || "99:99")); const rows = entries.length ? entries : [{ empty: true }]; rows.forEach(item => { const detail = item.empty ? ["Brak zaplanowanych zadan"] : pdfLines(`${item.task}${item.order ? " | " + item.order : ""}${item.notes ? " | " + item.notes : ""}`, 56); const height = Math.max(30, detail.length * 10 + 14); if(y - height < 42) { finish(); header(); } commands.push("0.79 0.85 0.91 RG 0.5 w 45 " + (y-height) + " 752 " + height + " re S"); text(58, y - 16, 9, `${day.toLocaleDateString("pl-PL")} ${item.empty ? "" : (item.isFlex ? "FLEX" : item.time)}`, true); if(!item.empty) text(220, y - 16, 9, item.employee, true); detail.forEach((line, index) => text(410, y - 16 - index * 10, 8, line, index === 0)); y -= height; }); });
-  finish(); const blob = new Blob([buildPdf(pages)], {type:"application/pdf"}), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "harmonogram_" + iso(new Date()) + ".pdf"; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  visibleDays.forEach((day, dayIndex) => {
+    const entries = selected.filter(item => item.date === iso(day)).sort((a,b) => (a.time || "99:99").localeCompare(b.time || "99:99"));
+    ensure(26); fill(45, y - 24, 752, 24, "0.90 0.94 0.98"); border(45, y - 24, 752, 24); text(58, y - 16, 11, `${D[(day.getDay()+6)%7].toUpperCase()}  |  ${day.toLocaleDateString("pl-PL")}`, true, "0.07 0.23 0.41"); y -= 24;
+    const rows = entries.length ? entries : [{ empty: true }];
+    rows.forEach((item, rowIndex) => {
+      const detail = item.empty ? ["Brak zaplanowanych zadan"] : pdfLines(`${item.task}${item.order ? "  |  Zlecenie: " + item.order : ""}${item.notes ? "  |  " + item.notes : ""}${item.completed ? "  |  WYKONANE" : ""}`, 62);
+      const height = Math.max(34, detail.length * 12 + 16); ensure(height);
+      if((rowIndex + dayIndex) % 2 === 0) fill(45, y - height, 752, height, "0.98 0.99 1");
+      border(45, y - height, 752, height); divider(192, y - height, 192, y); divider(386, y - height, 386, y);
+      if(item.empty) { text(58, y - 21, 10, "-", false, "0.35 0.42 0.51"); text(205, y - 21, 10, "-", false, "0.35 0.42 0.51"); }
+      else { text(58, y - 18, 11, item.isFlex ? "FLEX" : item.time, true, "0.07 0.23 0.41"); text(58, y - 32, 9, item.completed ? "Wykonane" : "Zaplanowane", false, item.completed ? "0.08 0.45 0.28" : "0.35 0.42 0.51"); text(205, y - 20, 10, item.employee, true); }
+      detail.forEach((line, index) => text(400, y - 18 - index * 12, index === 0 ? 10 : 9, line, index === 0, index === 0 ? "0.08 0.13 0.21" : "0.35 0.42 0.51"));
+      y -= height;
+    });
+  });
+  footer(); const blob = new Blob([buildPdf(pages)], {type:"application/pdf"}), link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "harmonogram_" + iso(new Date()) + ".pdf"; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 
 el("week").value = iso(monday());
